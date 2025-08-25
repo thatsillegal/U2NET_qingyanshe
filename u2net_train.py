@@ -1,48 +1,29 @@
 import os
 import albumentations as A
-
-import albumentations
 from albumentations.pytorch import ToTensorV2
-
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
 import torch
-import torchvision
 from torch.autograd import Variable
 import torch.nn as nn
-import torch.nn.functional as F
-
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms, utils
+from torch.utils.data import DataLoader
 import torch.optim as optim
-import torchvision.transforms as standard_transforms
-
-import numpy as np
 import glob
-
-from data_loader import Rescale
-from data_loader import RescaleT
-from data_loader import RandomCrop
-from data_loader import ToTensor
-from data_loader import ToTensorLab
-from data_loader import SalObjDataset
-
+from data_loader import MyDataset
+from data_loader import NormalizeSeparate
 from model import U2NET
 from model import U2NETP
 
 # CONFIG
-epoch_num = 100 # 100000 NOTE
+epoch_num = 100 # 100000 NOTEs
 batch_size_train = 8 # 6 NOTE
 batch_size_val = 1
 train_num = 0
 val_num = 0
-
 ite_num = 0
 running_loss = 0.0
 running_tar_loss = 0.0
 ite_num4val = 0
 save_frq = 2000 # save the model every 2000 iterations
-
 learning_rate = 0.001
 
 # ------- 1. define loss function --------
@@ -66,13 +47,7 @@ def muti_bce_loss_fusion(d0, d1, d2, d3, d4, d5, d6, labels_v):
 
 
 # ------- 2. set the directory of training dataset --------
-
-model_name = 'u2net' #'u2netp'
-
-# data_dir = os.path.join(os.getcwd(), os.sep)
-# tra_image_dir = os.path.join('BUILDINGS', 'images' + os.sep) # NOTE
-# tra_label_dir = os.path.join('BUILDINGS', 'masks' + os.sep) # NOTE
-
+model_name = 'u2net'
 current_dir = os.getcwd()
 saved_dir = os.path.join(current_dir, 'saved_models')
 dataset_dir = os.path.join(current_dir, 'dataset')
@@ -81,46 +56,22 @@ if not os.path.exists(saved_dir):
 if not os.path.exists(dataset_dir):
     os.makedirs(dataset_dir)
 
-# model_dir = os.path.join(os.getcwd(), 'saved_models', model_name + os.sep)
-
-# glob.glob() - 文件路径模式匹配函数
 ext = '.png'
 pattern = os.path.join(dataset_dir,'*' + ext)
-# imgs_path_list = glob.glob(pattern)
 all_files = glob.glob(pattern)
 
 imgs_path_list = [f for f in all_files if not f.endswith('_MASK.png')]
 labels_path_list = [f.replace(ext, '_MASK' + ext) for f in imgs_path_list]
 
-# for img_path in imgs_path_list:
-#     base_name = os.path.basename(img_path)
-#     img_name = os.path.splitext(base_name)[0]
-#     label_name = os.path.join(dataset_dir,img_name +"_MASK" + ext)
-#
-#     labels_path_list.append(label_name)
-
-
-	# img_name = img_path.split(os.sep)[-1] # 文件名
-
-	# aaa = img_name.split(".")
-	# bbb = aaa[0:-1] # 去掉后缀名
-	# imidx = bbb[0]
-	# for i in range(1,len(bbb)):
-	# 	imidx = imidx + "." + bbb[i]
-
-	# tra_lbl_name_list.append(tra_label_dir + imidx + label_ext)
-
 train_num = len(imgs_path_list)
-
 print("---")
 print("train images: ", train_num)
 print("---")
 
 # transform 一般是放在 __getitem__ 中的,因此每个样本被取出来的时候,都会单独经过一次 transform
-salobj_dataset = SalObjDataset(
+my_dataset = MyDataset(
     img_name_list=imgs_path_list,
     lbl_name_list=labels_path_list,
-    # 不应该用 torchvision.transforms.Compose，而应该用 albumentations.Compose
     transform= A.Compose([
         A.RandomSizedCrop((310,330),320,320),
         A.VerticalFlip(p=0.5),
@@ -130,13 +81,13 @@ salobj_dataset = SalObjDataset(
         A.ShiftScaleRotate(p=0.5),
         A.AdvancedBlur(),
         A.RandomCrop(288,288),
-        A.Normalize(mean=(0.485,0.456,0.406), std=(0.229,0.224,0.225)), # 为彩色图做归一化,但是灰度图没有做
-        # TODO
+        NormalizeSeparate(),
         ToTensorV2()
-    ]))
+    ])
+)
 
-salobj_dataloader = DataLoader(
-    salobj_dataset,
+my_dataloader = DataLoader(
+    my_dataset,
     batch_size=batch_size_train,
     shuffle=True, # 每个 epoch 取出来的顺序是不一样的
     num_workers=0) # NOTE num_workers=0 for Windows
@@ -147,7 +98,6 @@ if(model_name=='u2net'):
     net = U2NET(3, 1)
 elif(model_name=='u2netp'):
     net = U2NETP(3,1)
-
 if torch.cuda.is_available():
     net.cuda()
 
@@ -161,16 +111,13 @@ print("---start training...")
 for epoch in range(0, epoch_num):
     net.train() # 进入训练模式
 
-    for i, data in enumerate(salobj_dataloader):
+    for i, data in enumerate(my_dataloader):
         ite_num = ite_num + 1
         ite_num4val = ite_num4val + 1
 
-        # inputs, labels = data['image'], data['label']
         inputs, labels = data
-
         inputs = inputs.type(torch.FloatTensor)
         labels = labels.type(torch.FloatTensor)
-
         labels = labels.permute(0,3,1,2) # Tensor 格式
 
         # wrap them in Variable
@@ -201,8 +148,13 @@ for epoch in range(0, epoch_num):
         epoch + 1, epoch_num, (i + 1) * batch_size_train, train_num, ite_num, running_loss / ite_num4val, running_tar_loss / ite_num4val))
 
         if ite_num % save_frq == 0:
-
-            torch.save(net.state_dict(), saved_dir + model_name+"_bce_itr_%d_train_%3f_tar_%3f.pth" % (ite_num, running_loss / ite_num4val, running_tar_loss / ite_num4val))
+            save_path = os.path.join(
+                saved_dir,
+                "{}_bce_itr_{}_train_{:.3f}_tar_{:.3f}.pth".format(
+                    model_name, ite_num, running_loss / ite_num4val, running_tar_loss / ite_num4val
+                )
+            )
+            torch.save(net.state_dict(), save_path)
             running_loss = 0.0
             running_tar_loss = 0.0
             net.train()  # resume train
