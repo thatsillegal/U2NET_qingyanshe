@@ -11,7 +11,6 @@ import glob
 from data_loader import MyDataset
 from data_loader import NormalizeSeparate
 from model import U2NET
-from model import U2NETP
 
 # CONFIG
 epoch_num = 100 # 100000 NOTEs
@@ -94,10 +93,7 @@ my_dataloader = DataLoader(
 
 # ------- 3. define model --------
 # define the net
-if(model_name=='u2net'):
-    net = U2NET(3, 1)
-elif(model_name=='u2netp'):
-    net = U2NETP(3,1)
+net = U2NET(3, 1)
 if torch.cuda.is_available():
     net.cuda()
 
